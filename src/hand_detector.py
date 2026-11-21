@@ -1,5 +1,6 @@
 import math
 import os
+from itertools import combinations
 
 import cv2
 from mediapipe.tasks.python import vision
@@ -85,3 +86,54 @@ def normalize_landmarks(raw):
     for x, y, z in rotated:
         features.extend([x / scale, y / scale, z / scale])
     return features
+
+
+FINGERTIPS = [4, 8, 12, 16, 20]   # pouce, index, majeur, annulaire, auriculaire
+FINGER_PIPS = [6, 10, 14, 18]     # 2e articulation de l'index, majeur, annulaire, auriculaire
+
+# (a, b, c) : on mesure l'angle en b, entre les directions vers a et vers c
+ANGLE_TRIPLETS = [
+    (0, 1, 2), (1, 2, 3), (2, 3, 4),          # pouce
+    (0, 5, 6), (5, 6, 7), (6, 7, 8),          # index
+    (0, 9, 10), (9, 10, 11), (10, 11, 12),    # majeur
+    (0, 13, 14), (13, 14, 15), (14, 15, 16),  # annulaire
+    (0, 17, 18), (17, 18, 19), (18, 19, 20),  # auriculaire
+]
+
+
+def get_points(features):
+    """Decoupe la liste plate de 63 nombres en 21 points [x, y, z]."""
+    return [features[i:i + 3] for i in range(0, len(features), 3)]
+
+
+def angle(a, b, c):
+    """Angle (en radians) au point b, entre les directions vers a et vers c."""
+    v1 = [a[i] - b[i] for i in range(3)]
+    v2 = [c[i] - b[i] for i in range(3)]
+    norm1 = math.sqrt(sum(x * x for x in v1))
+    norm2 = math.sqrt(sum(x * x for x in v2))
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+    dot = sum(x * y for x, y in zip(v1, v2))
+    cosine = max(-1.0, min(1.0, dot / (norm1 * norm2)))
+    return math.acos(cosine)
+
+
+def distance_features(features):
+    """14 distances : entre les 5 bouts de doigts, et du pouce vers l'articulation des 4 doigts."""
+    points = get_points(features)
+    result = [math.dist(points[i], points[j]) for i, j in combinations(FINGERTIPS, 2)]
+    result += [math.dist(points[4], points[j]) for j in FINGER_PIPS]
+    return result
+
+
+def angle_features(features):
+    """15 angles de flexion, un par articulation."""
+    points = get_points(features)
+    return [angle(points[a], points[b], points[c]) for a, b, c in ANGLE_TRIPLETS]
+
+
+def build_features(raw):
+    """Caracteristiques finales pour le classifieur : points normalises (63) + distances (14) + angles (15)."""
+    normalized = normalize_landmarks(raw)
+    return normalized + distance_features(normalized) + angle_features(normalized)
